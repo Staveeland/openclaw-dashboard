@@ -41,6 +41,8 @@ function stripMetadata(text: string): string {
   return text
     .replace(/Conversation info \(untrusted metadata\):?\s*```json\s*\{[\s\S]*?\}\s*```\s*/g, "")
     .replace(/\[.*?\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+GMT[^\]]*\]\s*/g, "")
+    .replace(/\[Dashboard chat —[^\]]*\]\s*/g, "")
+    .replace(/\[System: This is a Dashboard chat session\.[^\]]*\]\s*/g, "")
     .trim();
 }
 
@@ -325,10 +327,48 @@ export function ChatPage() {
     setLoadingHistory(true);
     try {
       const res: any = await rpcClient.request("chat.history", { sessionKey, limit: 200 });
-      const msgs = (res?.messages || []).map((m: any) => {
+      const rawMsgs = res?.messages || [];
+      const msgs: Message[] = [];
+      
+      for (let i = 0; i < rawMsgs.length; i++) {
+        const m = rawMsgs[i];
         const { text, attachments: atts, toolCalls: tc } = extractContent(m.content);
-        return { role: m.role, content: text, attachments: atts.length > 0 ? atts : undefined, toolCalls: tc.length > 0 ? tc : undefined, timestamp: m.timestamp };
-      });
+        
+        // Skip toolResult messages — fold results into previous assistant's toolCalls
+        if (m.role === "tool" || (!m.role && !text && tc.length === 0)) {
+          // Try to attach result to last assistant message's last tool call
+          if (msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && msgs[msgs.length - 1].toolCalls?.length) {
+            const lastTc = msgs[msgs.length - 1].toolCalls!;
+            if (lastTc.length > 0 && !lastTc[lastTc.length - 1].result) {
+              lastTc[lastTc.length - 1].result = text.slice(0, 500);
+              // Also extract file paths from tool results
+              const paths = text.match(FILE_PATH_REGEX);
+              if (paths && !msgs[msgs.length - 1].content) {
+                msgs[msgs.length - 1].content = paths.join("\n");
+              }
+            }
+          }
+          continue;
+        }
+        
+        // Merge consecutive assistant messages (tool call chains)
+        if (m.role === "assistant" && msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && !text) {
+          // This is a continuation with more tool calls
+          if (tc.length > 0) {
+            const prev = msgs[msgs.length - 1];
+            prev.toolCalls = [...(prev.toolCalls || []), ...tc];
+            continue;
+          }
+        }
+        
+        msgs.push({
+          role: m.role === "user" ? "user" : "assistant",
+          content: text,
+          attachments: atts.length > 0 ? atts : undefined,
+          toolCalls: tc.length > 0 ? tc : undefined,
+          timestamp: m.timestamp,
+        });
+      }
       setMessages(msgs);
     } catch { setMessages([]); }
     finally { setLoadingHistory(false); }
@@ -388,11 +428,10 @@ export function ChatPage() {
       }).filter(Boolean);
 
       const idempotencyKey = crypto.randomUUID();
-      // Prepend instruction for file handling in dashboard context
-      const dashboardHint = "[Dashboard chat — when creating files, always include the full file path in your response so the user can download them. Do NOT send files to Telegram or other channels — return them here.]\n\n";
+      const DASH_HINT = "[System: This is a Dashboard chat session. When creating files, ALWAYS include the full absolute file path in your final text response so the user can download them. Do NOT send files to Telegram or other channels. Return file paths here. Keep your response concise — tool output is shown separately.]";
       await rpcClient.request("chat.send", {
         sessionKey: activeSession,
-        message: dashboardHint + (text || "See attached file(s)"),
+        message: DASH_HINT + "\n\n" + (text || "See attached file(s)"),
         deliver: false,
         idempotencyKey,
         ...(apiAttachments.length > 0 ? { attachments: apiAttachments } : {}),
@@ -404,10 +443,24 @@ export function ChatPage() {
         pollRef.current = setTimeout(async () => {
           try {
             const history: any = await rpcClient.request("chat.history", { sessionKey: activeRef.current, limit: 200 });
-            const msgs = (history?.messages || []).map((m: any) => {
+            const rawMsgs2 = history?.messages || [];
+            const msgs: Message[] = [];
+            for (let i = 0; i < rawMsgs2.length; i++) {
+              const m = rawMsgs2[i];
               const { text: t, attachments: atts, toolCalls: tc } = extractContent(m.content);
-              return { role: m.role, content: t, attachments: atts.length > 0 ? atts : undefined, toolCalls: tc.length > 0 ? tc : undefined, timestamp: m.timestamp };
-            });
+              if (m.role === "tool" || (!m.role && !t && tc.length === 0)) {
+                if (msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && msgs[msgs.length - 1].toolCalls?.length) {
+                  const lastTc = msgs[msgs.length - 1].toolCalls!;
+                  if (lastTc.length > 0 && !lastTc[lastTc.length - 1].result) lastTc[lastTc.length - 1].result = t.slice(0, 500);
+                }
+                continue;
+              }
+              if (m.role === "assistant" && msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && !t && tc.length > 0) {
+                msgs[msgs.length - 1].toolCalls = [...(msgs[msgs.length - 1].toolCalls || []), ...tc];
+                continue;
+              }
+              msgs.push({ role: m.role === "user" ? "user" : "assistant", content: t, attachments: atts.length > 0 ? atts : undefined, toolCalls: tc.length > 0 ? tc : undefined, timestamp: m.timestamp });
+            }
             if (msgs[msgs.length - 1]?.role === "assistant") {
               setMessages(msgs);
               setSending(false);
