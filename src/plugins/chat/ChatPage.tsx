@@ -12,6 +12,7 @@ import {
   X,
   FileText,
   Image as ImageIcon,
+  Download,
 } from "lucide-react";
 
 interface Attachment {
@@ -91,6 +92,105 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+const FILE_SERVER = "http://127.0.0.1:3457";
+const FILE_SERVER_TOKEN = "d67aab65b5490d1f005a51a2f12fc12375ba64c23565f3011bfe36b9e75032f9";
+
+// Detect file paths in message text
+const FILE_PATH_REGEX = /(\/(?:Users|tmp|home|var|opt)[^\s"'`\])<>]+\.(?:pdf|png|jpg|jpeg|gif|webp|svg|html|txt|md|json|csv|xml|zip|mp3|mp4|wav|py|js|ts|tsx))/gi;
+
+function detectFilePaths(text: string): string[] {
+  const matches = text.match(FILE_PATH_REGEX);
+  if (!matches) return [];
+  return [...new Set(matches)];
+}
+
+function getFileUrl(filePath: string): string {
+  return `${FILE_SERVER}/file?path=${encodeURIComponent(filePath)}`;
+}
+
+async function downloadFile(filePath: string) {
+  const url = getFileUrl(filePath);
+  try {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${FILE_SERVER_TOKEN}` } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filePath.split("/").pop() || "file";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (err) {
+    console.error("Download failed:", err);
+    alert("Failed to download file. Is the file server running?");
+  }
+}
+
+function FileDownloadCard({ filePath }: { filePath: string }) {
+  const name = filePath.split("/").pop() || "file";
+  const ext = name.split(".").pop()?.toLowerCase() || "";
+  const isImage = ["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(ext);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (isImage) {
+      // Try to load image preview
+      const url = getFileUrl(filePath);
+      fetch(url, { headers: { Authorization: `Bearer ${FILE_SERVER_TOKEN}` } })
+        .then((r) => r.ok ? r.blob() : null)
+        .then((blob) => { if (blob) setPreviewUrl(URL.createObjectURL(blob)); })
+        .catch(() => {});
+    }
+  }, [filePath]);
+
+  return (
+    <div className="my-2 inline-flex items-center gap-3 px-4 py-3 bg-[#0a0a0a] border border-[#222] rounded-xl hover:border-emerald-500/30 transition-colors group">
+      {previewUrl ? (
+        <img src={previewUrl} alt={name} className="w-10 h-10 rounded object-cover" />
+      ) : (
+        <div className="w-10 h-10 rounded bg-[#111] flex items-center justify-center">
+          <FileText className="w-5 h-5 text-emerald-500" />
+        </div>
+      )}
+      <div className="min-w-0">
+        <div className="text-sm font-medium truncate max-w-[200px]">{name}</div>
+        <div className="text-xs text-[#555] font-mono truncate max-w-[200px]">{filePath}</div>
+      </div>
+      <button
+        onClick={(e) => { e.stopPropagation(); setLoading(true); downloadFile(filePath).finally(() => setLoading(false)); }}
+        className="p-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 transition-colors flex-shrink-0"
+        title="Download"
+      >
+        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+      </button>
+    </div>
+  );
+}
+
+// Render message text with clickable file links
+function MessageContent({ text }: { text: string }) {
+  const filePaths = detectFilePaths(text);
+  if (filePaths.length === 0) return <>{text}</>;
+
+  // Remove file paths from text for cleaner display, then show download cards
+  let cleanText = text;
+  for (const fp of filePaths) {
+    cleanText = cleanText.replace(fp, "").replace(/\s{2,}/g, " ");
+  }
+  cleanText = cleanText.trim();
+
+  return (
+    <>
+      {cleanText && <div className="whitespace-pre-wrap">{cleanText}</div>}
+      <div className="flex flex-col gap-1 mt-1">
+        {filePaths.map((fp, i) => (
+          <FileDownloadCard key={i} filePath={fp} />
+        ))}
+      </div>
+    </>
+  );
 }
 
 const LOCAL_SESSIONS_KEY = "openclaw-dashboard-chat-sessions";
@@ -395,7 +495,11 @@ export function ChatPage() {
                     ))}
                   </div>
                 )}
-                {msg.content && <div className="px-4 py-3 whitespace-pre-wrap">{msg.content}</div>}
+                {msg.content && (
+                  <div className="px-4 py-3">
+                    {msg.role === "assistant" ? <MessageContent text={msg.content} /> : <span className="whitespace-pre-wrap">{msg.content}</span>}
+                  </div>
+                )}
               </div>
             </div>
           ))}
