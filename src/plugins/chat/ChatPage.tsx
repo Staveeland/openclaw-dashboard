@@ -23,14 +23,24 @@ interface ChatSession {
   updatedAt?: number;
 }
 
+function stripMetadata(text: string): string {
+  // Remove OpenClaw inbound metadata blocks
+  return text
+    .replace(/Conversation info \(untrusted metadata\):?\s*```json\s*\{[\s\S]*?\}\s*```\s*/g, "")
+    .replace(/\[.*?\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+GMT[^\]]*\]\s*/g, "")
+    .trim();
+}
+
 function extractText(content: any): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content))
-    return content
+  let text: string;
+  if (typeof content === "string") text = content;
+  else if (Array.isArray(content))
+    text = content
       .filter((b: any) => b.type === "text")
       .map((b: any) => b.text)
       .join("\n");
-  return JSON.stringify(content);
+  else text = JSON.stringify(content);
+  return stripMetadata(text);
 }
 
 const LOCAL_SESSIONS_KEY = "openclaw-dashboard-chat-sessions";
