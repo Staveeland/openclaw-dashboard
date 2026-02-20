@@ -4,10 +4,17 @@ type DeferredPromise<T = any> = {
   timer: ReturnType<typeof setTimeout>;
 };
 
+function uuid(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 export class OpenClawRPC {
   private ws: WebSocket | null = null;
-  private reqId = 1;
-  private pending = new Map<number, DeferredPromise>();
+  private pending = new Map<string, DeferredPromise>();
   private listeners = new Map<string, Set<(data: any) => void>>();
   private reconnectAttempts = 0;
   private maxReconnect = 5;
@@ -15,30 +22,38 @@ export class OpenClawRPC {
   private url = "";
   private token = "";
   private intentionalClose = false;
+  private connectNonce: string | null = null;
+  private authenticated = false;
+  private instanceId = uuid();
 
   connect(url: string, token: string): Promise<void> {
     this.url = url;
     this.token = token;
     this.intentionalClose = false;
+    this.authenticated = false;
     return this._connect();
   }
 
   private _connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const sep = this.url.includes("?") ? "&" : "?";
-      this.ws = new WebSocket(`${this.url}${sep}token=${this.token}`);
+      // Connect without token in URL - auth happens via connect handshake
+      this.ws = new WebSocket(this.url);
+      let resolved = false;
 
       this.ws.onopen = () => {
         this.reconnectAttempts = 0;
-        this.triggerEvent("_connection", { status: "connected" });
-        resolve();
+        // Don't resolve yet - wait for auth handshake
       };
 
       this.ws.onerror = () => {
-        reject(new Error("WebSocket connection failed"));
+        if (!resolved) {
+          resolved = true;
+          reject(new Error("WebSocket connection failed"));
+        }
       };
 
       this.ws.onclose = () => {
+        this.authenticated = false;
         this.triggerEvent("_connection", { status: "disconnected" });
         if (!this.intentionalClose && this.reconnectAttempts < this.maxReconnect) {
           this.reconnectAttempts++;
@@ -48,22 +63,50 @@ export class OpenClawRPC {
 
       this.ws.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data);
+          const msg = JSON.parse(event.data);
 
-          // Response to a request
-          if (data.id && this.pending.has(data.id)) {
-            const deferred = this.pending.get(data.id)!;
-            clearTimeout(deferred.timer);
-            if (data.error) {
-              deferred.reject(data.error);
-            } else {
-              deferred.resolve(data.result);
+          // Handle events
+          if (msg.type === "event") {
+            if (msg.event === "connect.challenge") {
+              // Gateway sends nonce, we respond with connect RPC
+              const nonce = msg.payload?.nonce;
+              this.connectNonce = nonce ?? null;
+              this._sendConnect()
+                .then((hello) => {
+                  this.authenticated = true;
+                  this.triggerEvent("_connection", { status: "connected" });
+                  this.triggerEvent("_hello", hello);
+                  if (!resolved) {
+                    resolved = true;
+                    resolve();
+                  }
+                })
+                .catch((err) => {
+                  if (!resolved) {
+                    resolved = true;
+                    reject(err);
+                  }
+                  this.ws?.close(4008, "connect failed");
+                });
+              return;
             }
-            this.pending.delete(data.id);
+            // Forward other events to listeners
+            this.triggerEvent(msg.event, msg.payload);
+            return;
           }
-          // Push notification from gateway
-          else if (data.method) {
-            this.triggerEvent(data.method, data.params);
+
+          // Handle RPC responses
+          if (msg.type === "res") {
+            const deferred = this.pending.get(msg.id);
+            if (!deferred) return;
+            this.pending.delete(msg.id);
+            clearTimeout(deferred.timer);
+            if (msg.ok) {
+              deferred.resolve(msg.payload);
+            } else {
+              deferred.reject(new Error(msg.error?.message ?? "request failed"));
+            }
+            return;
           }
         } catch {
           // ignore parse errors
@@ -72,20 +115,51 @@ export class OpenClawRPC {
     });
   }
 
-  request<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
+  private _sendConnect(): Promise<any> {
+    const params: any = {
+      minProtocol: 3,
+      maxProtocol: 3,
+      client: {
+        id: "openclaw-dashboard",
+        version: "0.1.0",
+        platform: typeof navigator !== "undefined" ? navigator.platform : "web",
+        mode: "ui",
+        instanceId: this.instanceId,
+      },
+      role: "operator",
+      scopes: ["operator.admin"],
+      caps: [],
+      auth: {
+        token: this.token || undefined,
+      },
+      userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "openclaw-dashboard",
+      locale: typeof navigator !== "undefined" ? navigator.language : "en",
+    };
+    return this._rawRequest("connect", params);
+  }
+
+  /** Low-level request that works before auth (used for connect handshake) */
+  private _rawRequest<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
     return new Promise((resolve, reject) => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
         return reject(new Error("Not connected"));
       }
-      const id = this.reqId++;
+      const id = uuid();
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Request timeout: ${method}`));
       }, 30000);
 
       this.pending.set(id, { resolve, reject, timer });
-      this.ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
+      this.ws.send(JSON.stringify({ type: "req", id, method, params }));
     });
+  }
+
+  request<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
+    if (!this.authenticated) {
+      return Promise.reject(new Error("Not authenticated"));
+    }
+    return this._rawRequest(method, params);
   }
 
   on(event: string, callback: (data: any) => void): () => void {
@@ -104,6 +178,7 @@ export class OpenClawRPC {
 
   disconnect() {
     this.intentionalClose = true;
+    this.authenticated = false;
     this.pending.forEach((d) => {
       clearTimeout(d.timer);
       d.reject(new Error("Disconnected"));
@@ -114,7 +189,7 @@ export class OpenClawRPC {
   }
 
   get connected(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN;
+    return this.ws?.readyState === WebSocket.OPEN && this.authenticated;
   }
 }
 

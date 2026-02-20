@@ -35,19 +35,21 @@ export default function DashboardLayout({
         }
         setConnected(true);
 
-        // Discover capabilities
+        // Discover capabilities via health + status
         try {
-          const status: any = await rpcClient.request("system.status");
-          const caps = status?.capabilities || [
+          const [health, status]: [any, any] = await Promise.all([
+            rpcClient.request("health", {}).catch(() => null),
+            rpcClient.request("status", {}).catch(() => null),
+          ]);
+          setSystemHealth({ health, status });
+          // Assume all capabilities since gateway doesn't expose a caps list
+          setCapabilities([
             "sessions.list",
             "agent.send",
             "cron.list",
             "memory.search",
-          ];
-          setCapabilities(caps);
-          setSystemHealth(status);
+          ]);
         } catch {
-          // If system.status not available, assume all capabilities
           setCapabilities([
             "sessions.list",
             "agent.send",
@@ -66,7 +68,7 @@ export default function DashboardLayout({
 
         // Fetch cron
         try {
-          const res: any = await rpcClient.request("cron.list");
+          const res: any = await rpcClient.request("cron.list", { includeDisabled: true });
           setCronJobs(res?.jobs || res || []);
         } catch {}
       } catch {
