@@ -24,7 +24,7 @@ export function ChatPage() {
 
   // Listen for streaming push notifications
   useEffect(() => {
-    const unsub = rpcClient.on("agent.stream", (data: any) => {
+    const unsub = rpcClient.on("chat", (data: any) => {
       if (data?.chunk) {
         setStreamBuffer((prev) => prev + data.chunk);
       }
@@ -57,19 +57,39 @@ export function ChatPage() {
     setSending(true);
 
     try {
-      const res: any = await rpcClient.request("agent.send", {
+      await rpcClient.request("chat.send", {
         message: text,
+        deliver: false,
       });
-      const reply =
-        res?.result?.payloads?.[0]?.text ||
-        res?.text ||
-        res?.message ||
-        (typeof res === "string" ? res : JSON.stringify(res));
-
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: reply, timestamp: new Date() },
-      ]);
+      // Response comes via chat event stream — poll history for now
+      const maxWait = 60000;
+      const start = Date.now();
+      while (Date.now() - start < maxWait) {
+        await new Promise((r) => setTimeout(r, 2000));
+        try {
+          const history: any = await rpcClient.request("chat.history", {
+            limit: 10,
+          });
+          const msgs = history?.messages || [];
+          const last = msgs[msgs.length - 1];
+          if (last?.role === "assistant") {
+            const content =
+              typeof last.content === "string"
+                ? last.content
+                : Array.isArray(last.content)
+                  ? last.content
+                      .filter((b: any) => b.type === "text")
+                      .map((b: any) => b.text)
+                      .join("\n")
+                  : JSON.stringify(last.content);
+            setMessages((prev) => [
+              ...prev,
+              { role: "assistant", content, timestamp: new Date() },
+            ]);
+            break;
+          }
+        } catch {}
+      }
     } catch (err: any) {
       setMessages((prev) => [
         ...prev,
