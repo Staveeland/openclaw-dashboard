@@ -268,8 +268,17 @@ export function ChatPage() {
 
   useEffect(() => {
     const unsub = rpcClient.on("chat", (data: any) => {
-      if (!data || data.sessionKey !== activeRef.current) return;
-      if (data.state === "final") { loadHistory(activeRef.current); setSending(false); }
+      if (!data) return;
+      const eventKey = data.sessionKey || "";
+      const active = activeRef.current || "";
+      // Gateway may prefix with "agent:main:" or similar
+      if (eventKey !== active && !eventKey.endsWith(":" + active) && !active.endsWith(":" + eventKey)) return;
+      if (data.state === "final" || data.state === "error" || data.state === "aborted") {
+        if (pollRef.current) { clearTimeout(pollRef.current); pollRef.current = null; }
+        loadHistory(activeRef.current);
+        setSending(false);
+        loadSessions();
+      }
     });
     return unsub;
   }, []);
@@ -443,9 +452,9 @@ export function ChatPage() {
         ...(apiAttachments.length > 0 ? { attachments: apiAttachments } : {}),
       });
 
-      // Poll fallback
+      // Poll fallback — also check for event-based completion
       const poll = async (attempt: number) => {
-        if (attempt > 30) { setSending(false); return; }
+        if (attempt > 60) { setSending(false); return; } // 2 min timeout
         pollRef.current = setTimeout(async () => {
           try {
             const history: any = await rpcClient.request("chat.history", { sessionKey: activeRef.current, limit: 200 });
