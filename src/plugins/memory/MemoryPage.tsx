@@ -11,7 +11,7 @@ interface MemoryResult {
   endLine?: number;
 }
 
-export default function MemoryPage() {
+export function MemoryPage() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<MemoryResult[]>([]);
   const [searching, setSearching] = useState(false);

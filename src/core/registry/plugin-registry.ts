@@ -1,57 +1,27 @@
-import {
-  Activity,
-  MessagesSquare,
-  Clock,
-  Brain,
-  LayoutDashboard,
-} from "lucide-react";
-import type { PluginManifest } from "./types";
+import type { DashboardPlugin } from "./types";
+import { SystemPlugin } from "@/plugins/system";
+import { SessionsPlugin } from "@/plugins/sessions";
+import { ChatPlugin } from "@/plugins/chat";
+import { CronPlugin } from "@/plugins/cron";
+import { MemoryPlugin } from "@/plugins/memory";
 
-export const plugins: PluginManifest[] = [
-  {
-    id: "system",
-    name: "Overview",
-    description: "System status and health",
-    icon: LayoutDashboard,
-    requiredCapabilities: [],
-    path: "/dashboard",
-  },
-  {
-    id: "sessions",
-    name: "Sessions",
-    description: "Active conversation sessions",
-    icon: Activity,
-    requiredCapabilities: ["sessions.list"],
-    path: "/dashboard/sessions",
-  },
-  {
-    id: "chat",
-    name: "Chat",
-    description: "Chat with your agent",
-    icon: MessagesSquare,
-    requiredCapabilities: ["agent.send"],
-    path: "/dashboard/chat",
-  },
-  {
-    id: "cron",
-    name: "Cron Jobs",
-    description: "Scheduled tasks",
-    icon: Clock,
-    requiredCapabilities: ["cron.list"],
-    path: "/dashboard/cron",
-  },
-  {
-    id: "memory",
-    name: "Memory",
-    description: "Search agent memory",
-    icon: Brain,
-    requiredCapabilities: ["memory.search"],
-    path: "/dashboard/memory",
-  },
+// New plugins just get added here
+const ALL_PLUGINS: DashboardPlugin[] = [
+  SystemPlugin,
+  SessionsPlugin,
+  ChatPlugin,
+  CronPlugin,
+  MemoryPlugin,
 ];
 
-export function getActivePlugins(capabilities: string[]): PluginManifest[] {
-  return plugins.filter((p) =>
-    p.requiredCapabilities.every((cap) => capabilities.includes(cap))
+export function getActivePlugins(
+  gatewayCapabilities: string[]
+): DashboardPlugin[] {
+  return ALL_PLUGINS.filter((plugin) =>
+    plugin.requiredCapabilities.every((cap) =>
+      gatewayCapabilities.includes(cap)
+    )
   );
 }
+
+export { ALL_PLUGINS as plugins };

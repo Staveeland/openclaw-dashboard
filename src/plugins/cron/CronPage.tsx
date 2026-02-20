@@ -2,7 +2,7 @@
 import { useSystemStore } from "@/core/store/useSystemStore";
 import { Clock, CheckCircle2, AlertCircle, XCircle } from "lucide-react";
 
-export default function CronPage() {
+export function CronPage() {
   const cronJobs = useSystemStore((s) => s.cronJobs);
 
   function getStatusIcon(status?: string) {

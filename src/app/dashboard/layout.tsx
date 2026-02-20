@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useAuthStore } from "@/core/store/useAuthStore";
 import { useSystemStore } from "@/core/store/useSystemStore";
 import { rpcClient } from "@/core/ws/rpc-client";
-import { plugins } from "@/core/registry/plugin-registry";
+import { getActivePlugins } from "@/core/registry/plugin-registry";
 import { Zap, LogOut, Menu, X, Wifi, WifiOff } from "lucide-react";
 
 export default function DashboardLayout({
@@ -90,10 +90,7 @@ export default function DashboardLayout({
     router.replace("/connect");
   }
 
-  // Filter plugins by capabilities
-  const activePlugins = plugins.filter((p) =>
-    p.requiredCapabilities.every((cap) => capabilities.includes(cap))
-  );
+  const activePlugins = getActivePlugins(capabilities);
 
   return (
     <div className="min-h-screen flex">
@@ -132,11 +129,12 @@ export default function DashboardLayout({
         <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
           {activePlugins.map((plugin) => {
             const Icon = plugin.icon;
-            const active = pathname === plugin.path;
+            const href = plugin.id === "system" ? "/dashboard" : `/dashboard/${plugin.id}`;
+            const active = pathname === href;
             return (
               <Link
                 key={plugin.id}
-                href={plugin.path}
+                href={href}
                 onClick={() => setSidebarOpen(false)}
                 className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                   active
