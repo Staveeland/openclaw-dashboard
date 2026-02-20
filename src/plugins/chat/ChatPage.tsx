@@ -74,7 +74,8 @@ function extractContent(content: any): { text: string; attachments: Attachment[]
           });
         }
       } else if (block.type === "toolCall" || block.type === "tool_use") {
-        const args = typeof block.arguments === "string" ? block.arguments : JSON.stringify(block.arguments || block.input || {});
+        const rawArgs = block.arguments || block.input || {};
+        const args = typeof rawArgs === "string" ? rawArgs : JSON.stringify(rawArgs, null, 2);
         toolCalls.push({ name: block.name || "tool", args });
       } else if (block.type === "toolResult" || block.type === "tool_result") {
         // Try to find file paths in tool results
@@ -335,7 +336,7 @@ export function ChatPage() {
         const { text, attachments: atts, toolCalls: tc } = extractContent(m.content);
         
         // Skip toolResult messages — fold results into previous assistant's toolCalls
-        if (m.role === "tool" || (!m.role && !text && tc.length === 0)) {
+        if (m.role === "toolResult" || m.role === "tool") {
           // Try to attach result to last assistant message's last tool call
           if (msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && msgs[msgs.length - 1].toolCalls?.length) {
             const lastTc = msgs[msgs.length - 1].toolCalls!;
@@ -448,7 +449,7 @@ export function ChatPage() {
             for (let i = 0; i < rawMsgs2.length; i++) {
               const m = rawMsgs2[i];
               const { text: t, attachments: atts, toolCalls: tc } = extractContent(m.content);
-              if (m.role === "tool" || (!m.role && !t && tc.length === 0)) {
+              if (m.role === "toolResult" || m.role === "tool") {
                 if (msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && msgs[msgs.length - 1].toolCalls?.length) {
                   const lastTc = msgs[msgs.length - 1].toolCalls!;
                   if (lastTc.length > 0 && !lastTc[lastTc.length - 1].result) lastTc[lastTc.length - 1].result = t.slice(0, 500);
