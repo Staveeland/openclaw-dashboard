@@ -1,33 +1,58 @@
 "use client";
 import { useState } from "react";
 import { rpcClient } from "@/core/ws/rpc-client";
-import { Brain, Search, Loader2, FileText } from "lucide-react";
-
-interface MemoryResult {
-  path: string;
-  score: number;
-  snippet: string;
-  startLine?: number;
-  endLine?: number;
-}
+import { Brain, Search, Loader2, FileText, MessageSquare } from "lucide-react";
 
 export function MemoryPage() {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<MemoryResult[]>([]);
+  const [answer, setAnswer] = useState("");
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [error, setError] = useState("");
 
   async function handleSearch() {
     if (!query.trim() || searching) return;
     setSearching(true);
     setSearched(true);
+    setAnswer("");
+    setError("");
     try {
-      const res: any = await rpcClient.request("memory.search", {
-        query: query.trim(),
+      // Memory search isn't a direct gateway RPC — use chat to ask the agent
+      await rpcClient.request("chat.send", {
+        sessionKey: "memory-search",
+        message: `Search your memory files for: "${query.trim()}". Return the most relevant snippets with file paths and line numbers. Be concise.`,
+        deliver: false,
       });
-      setResults(res?.results || res || []);
-    } catch {
-      setResults([]);
+      // Poll for response
+      const maxWait = 30000;
+      const start = Date.now();
+      while (Date.now() - start < maxWait) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const history: any = await rpcClient.request("chat.history", {
+          sessionKey: "memory-search",
+          limit: 5,
+        });
+        const messages = history?.messages || [];
+        const last = messages[messages.length - 1];
+        if (last?.role === "assistant") {
+          const text =
+            typeof last.content === "string"
+              ? last.content
+              : Array.isArray(last.content)
+                ? last.content
+                    .filter((b: any) => b.type === "text")
+                    .map((b: any) => b.text)
+                    .join("\n")
+                : JSON.stringify(last.content);
+          setAnswer(text);
+          break;
+        }
+      }
+      if (!answer && Date.now() - start >= maxWait) {
+        setError("Search timed out. Try again or use the Chat page.");
+      }
+    } catch (e: any) {
+      setError(e?.message || "Search failed");
     } finally {
       setSearching(false);
     }
@@ -49,7 +74,7 @@ export function MemoryPage() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-            placeholder="Search memory files..."
+            placeholder="Search agent memory..."
             className="w-full pl-10 pr-4 py-3 bg-[#111] border border-[#222] rounded-xl text-white placeholder-[#555] focus:outline-none focus:border-emerald-500/50 text-sm"
           />
         </div>
@@ -62,51 +87,42 @@ export function MemoryPage() {
         </button>
       </div>
 
-      {/* Results */}
-      {!searched ? (
+      {/* Info */}
+      {!searched && (
         <div className="card p-8 text-center text-[#888]">
           <Brain className="w-12 h-12 mx-auto mb-3 opacity-30" />
-          <p>Search your agent&apos;s memory</p>
+          <p>Search your agent&apos;s memory files</p>
+          <p className="text-xs mt-2 text-[#555]">
+            Uses the agent to search MEMORY.md and memory/*.md files
+          </p>
         </div>
-      ) : results.length === 0 ? (
+      )}
+
+      {/* Loading */}
+      {searching && (
         <div className="card p-8 text-center text-[#888]">
-          <p>No results found for &quot;{query}&quot;</p>
+          <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin text-emerald-500" />
+          <p>Searching memory...</p>
         </div>
-      ) : (
-        <div className="space-y-3">
-          {results.map((r, i) => (
-            <div
-              key={i}
-              className="card p-4 hover:border-[#333] transition-colors"
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <FileText className="w-4 h-4 text-emerald-500" />
-                <span className="font-mono text-sm text-emerald-400">
-                  {r.path}
-                </span>
-                {r.startLine && (
-                  <span className="text-xs text-[#888]">
-                    L{r.startLine}
-                    {r.endLine ? `-${r.endLine}` : ""}
-                  </span>
-                )}
-                <div className="ml-auto flex items-center gap-2">
-                  <div className="w-16 h-1.5 bg-[#222] rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-emerald-500 rounded-full"
-                      style={{ width: `${Math.round(r.score * 100)}%` }}
-                    />
-                  </div>
-                  <span className="text-xs text-[#888]">
-                    {Math.round(r.score * 100)}%
-                  </span>
-                </div>
-              </div>
-              <p className="text-sm text-[#ccc] whitespace-pre-wrap line-clamp-3">
-                {r.snippet}
-              </p>
-            </div>
-          ))}
+      )}
+
+      {/* Error */}
+      {error && (
+        <div className="card p-4 border-red-500/20 bg-red-500/5 text-red-400 text-sm">
+          {error}
+        </div>
+      )}
+
+      {/* Answer */}
+      {answer && !searching && (
+        <div className="card p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <MessageSquare className="w-4 h-4 text-emerald-500" />
+            <span className="text-sm font-medium text-emerald-400">Agent Response</span>
+          </div>
+          <div className="text-sm text-[#ccc] whitespace-pre-wrap leading-relaxed">
+            {answer}
+          </div>
         </div>
       )}
     </div>
