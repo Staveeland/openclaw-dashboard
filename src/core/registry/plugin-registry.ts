@@ -4,6 +4,7 @@ import { SessionsPlugin } from "@/plugins/sessions";
 import { ChatPlugin } from "@/plugins/chat";
 import { CronPlugin } from "@/plugins/cron";
 import { MemoryPlugin } from "@/plugins/memory";
+import { LogsPlugin } from "@/plugins/logs";
 
 // New plugins just get added here
 const ALL_PLUGINS: DashboardPlugin[] = [
@@ -12,6 +13,7 @@ const ALL_PLUGINS: DashboardPlugin[] = [
   ChatPlugin,
   CronPlugin,
   MemoryPlugin,
+  LogsPlugin,
 ];
 
 export function getActivePlugins(
