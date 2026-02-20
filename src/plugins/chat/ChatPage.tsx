@@ -57,9 +57,12 @@ export function ChatPage() {
     setSending(true);
 
     try {
+      const idempotencyKey = crypto.randomUUID();
       await rpcClient.request("chat.send", {
+        sessionKey: "dashboard-chat",
         message: text,
         deliver: false,
+        idempotencyKey,
       });
       // Response comes via chat event stream — poll history for now
       const maxWait = 60000;
@@ -68,6 +71,7 @@ export function ChatPage() {
         await new Promise((r) => setTimeout(r, 2000));
         try {
           const history: any = await rpcClient.request("chat.history", {
+            sessionKey: "dashboard-chat",
             limit: 10,
           });
           const msgs = history?.messages || [];
