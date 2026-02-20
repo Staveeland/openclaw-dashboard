@@ -42,14 +42,16 @@ export function CronPage() {
                   <div className="font-medium text-sm">{job.name}</div>
                   {job.schedule && (
                     <div className="text-xs text-[#888] font-mono mt-0.5">
-                      {job.schedule}
+                      {typeof job.schedule === "string"
+                        ? job.schedule
+                        : job.schedule?.expr || job.schedule?.kind || "—"}
                     </div>
                   )}
                 </div>
               </div>
               <div className="text-right">
                 {job.lastRun && (
-                  <div className="text-xs text-[#888]">{job.lastRun}</div>
+                  <div className="text-xs text-[#888]">{typeof job.lastRun === "string" ? job.lastRun : "—"}</div>
                 )}
                 {job.status && (
                   <div
