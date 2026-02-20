@@ -26,6 +26,7 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   attachments?: Attachment[];
+  toolCalls?: ToolCall[];
   timestamp?: number;
 }
 
@@ -43,8 +44,15 @@ function stripMetadata(text: string): string {
     .trim();
 }
 
-function extractContent(content: any): { text: string; attachments: Attachment[] } {
+interface ToolCall {
+  name: string;
+  args: string;
+  result?: string;
+}
+
+function extractContent(content: any): { text: string; attachments: Attachment[]; toolCalls: ToolCall[] } {
   const attachments: Attachment[] = [];
+  const toolCalls: ToolCall[] = [];
   let text = "";
 
   if (typeof content === "string") {
@@ -63,13 +71,26 @@ function extractContent(content: any): { text: string; attachments: Attachment[]
             size: 0,
           });
         }
+      } else if (block.type === "toolCall" || block.type === "tool_use") {
+        const args = typeof block.arguments === "string" ? block.arguments : JSON.stringify(block.arguments || block.input || {});
+        toolCalls.push({ name: block.name || "tool", args });
+      } else if (block.type === "toolResult" || block.type === "tool_result") {
+        // Try to find file paths in tool results
+        const resultText = typeof block.content === "string" ? block.content :
+          Array.isArray(block.content) ? block.content.map((b: any) => b.text || "").join("\n") : "";
+        if (toolCalls.length > 0) {
+          toolCalls[toolCalls.length - 1].result = resultText.slice(0, 500);
+        }
+        // Extract file paths from tool results too
+        const paths = resultText.match(FILE_PATH_REGEX);
+        if (paths) text += (text ? "\n" : "") + paths.join("\n");
       }
     }
   } else {
     text = JSON.stringify(content);
   }
 
-  return { text: stripMetadata(text), attachments };
+  return { text: stripMetadata(text), attachments, toolCalls };
 }
 
 function fileToAttachment(file: File): Promise<Attachment> {
@@ -305,8 +326,8 @@ export function ChatPage() {
     try {
       const res: any = await rpcClient.request("chat.history", { sessionKey, limit: 200 });
       const msgs = (res?.messages || []).map((m: any) => {
-        const { text, attachments: atts } = extractContent(m.content);
-        return { role: m.role, content: text, attachments: atts.length > 0 ? atts : undefined, timestamp: m.timestamp };
+        const { text, attachments: atts, toolCalls: tc } = extractContent(m.content);
+        return { role: m.role, content: text, attachments: atts.length > 0 ? atts : undefined, toolCalls: tc.length > 0 ? tc : undefined, timestamp: m.timestamp };
       });
       setMessages(msgs);
     } catch { setMessages([]); }
@@ -367,9 +388,11 @@ export function ChatPage() {
       }).filter(Boolean);
 
       const idempotencyKey = crypto.randomUUID();
+      // Prepend instruction for file handling in dashboard context
+      const dashboardHint = "[Dashboard chat — when creating files, always include the full file path in your response so the user can download them. Do NOT send files to Telegram or other channels — return them here.]\n\n";
       await rpcClient.request("chat.send", {
         sessionKey: activeSession,
-        message: text || "See attached file(s)",
+        message: dashboardHint + (text || "See attached file(s)"),
         deliver: false,
         idempotencyKey,
         ...(apiAttachments.length > 0 ? { attachments: apiAttachments } : {}),
@@ -382,8 +405,8 @@ export function ChatPage() {
           try {
             const history: any = await rpcClient.request("chat.history", { sessionKey: activeRef.current, limit: 200 });
             const msgs = (history?.messages || []).map((m: any) => {
-              const { text: t, attachments: atts } = extractContent(m.content);
-              return { role: m.role, content: t, attachments: atts.length > 0 ? atts : undefined, timestamp: m.timestamp };
+              const { text: t, attachments: atts, toolCalls: tc } = extractContent(m.content);
+              return { role: m.role, content: t, attachments: atts.length > 0 ? atts : undefined, toolCalls: tc.length > 0 ? tc : undefined, timestamp: m.timestamp };
             });
             if (msgs[msgs.length - 1]?.role === "assistant") {
               setMessages(msgs);
@@ -493,6 +516,31 @@ export function ChatPage() {
                         </div>
                       )
                     ))}
+                  </div>
+                )}
+                {/* Tool calls */}
+                {msg.toolCalls && msg.toolCalls.length > 0 && (
+                  <div className="px-4 py-2 space-y-1.5">
+                    {msg.toolCalls.map((tc, j) => {
+                      let argPreview = "";
+                      try {
+                        const parsed = JSON.parse(tc.args);
+                        argPreview = parsed.command || parsed.query || parsed.message || parsed.path || parsed.url || tc.args.slice(0, 80);
+                      } catch { argPreview = tc.args.slice(0, 80); }
+                      return (
+                        <details key={j} className="group">
+                          <summary className="flex items-center gap-2 text-xs text-[#666] cursor-pointer hover:text-[#999] transition-colors">
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-400/60" />
+                            <span className="font-mono font-medium text-blue-400/80">{tc.name}</span>
+                            <span className="truncate max-w-[300px] opacity-60">{argPreview}</span>
+                          </summary>
+                          <div className="mt-1 ml-3.5 text-[10px] font-mono text-[#555] bg-black/30 rounded-lg p-2 max-h-32 overflow-auto whitespace-pre-wrap">
+                            {tc.args}
+                            {tc.result && <><br/><span className="text-emerald-500/60">→ {tc.result}</span></>}
+                          </div>
+                        </details>
+                      );
+                    })}
                   </div>
                 )}
                 {msg.content && (
