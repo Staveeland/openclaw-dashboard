@@ -23,7 +23,13 @@ export function CronWidget() {
             )}
             <span className="text-sm truncate max-w-[180px]">{job.name}</span>
           </div>
-          {job.schedule && <span className="text-xs text-[#888] font-mono">{job.schedule}</span>}
+          {job.schedule && (
+            <span className="text-xs text-[#888] font-mono">
+              {typeof job.schedule === "string"
+                ? job.schedule
+                : job.schedule?.expr || job.schedule?.kind || "—"}
+            </span>
+          )}
         </div>
       ))}
     </div>

@@ -15,7 +15,7 @@ export function SessionsWidget() {
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
               <span className="font-mono text-xs truncate max-w-[180px]">{s.key}</span>
             </div>
-            <span className="text-xs text-[#888]">{s.model || "—"}</span>
+            <span className="text-xs text-[#888]">{typeof s.model === "string" ? s.model : "—"}</span>
           </div>
         ))
       )}

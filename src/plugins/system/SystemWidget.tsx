@@ -8,8 +8,8 @@ export function SystemWidget() {
   const stats = [
     { label: "Sessions", value: sessions.length, icon: Activity, color: "text-emerald-500" },
     { label: "Cron Jobs", value: cronJobs.length, icon: Clock, color: "text-blue-500" },
-    { label: "Memory", value: systemHealth?.memory?.files || "—", icon: Brain, color: "text-purple-500" },
-    { label: "Status", value: systemHealth ? "Online" : "—", icon: Cpu, color: "text-emerald-500" },
+    { label: "Uptime", value: systemHealth?.health?.uptime ? `${Math.floor(systemHealth.health.uptime / 60)}m` : "—", icon: Brain, color: "text-purple-500" },
+    { label: "Status", value: systemHealth?.health?.ok ? "Online" : systemHealth ? "Degraded" : "—", icon: Cpu, color: "text-emerald-500" },
   ];
 
   return (
