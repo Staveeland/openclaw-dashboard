@@ -33,9 +33,39 @@ function extractText(content: any): string {
   return JSON.stringify(content);
 }
 
+const LOCAL_SESSIONS_KEY = "openclaw-dashboard-chat-sessions";
+
 function generateSessionKey(): string {
   const id = crypto.randomUUID().slice(0, 8);
   return `dashboard-${id}`;
+}
+
+function getLocalSessions(): ChatSession[] {
+  try {
+    return JSON.parse(localStorage.getItem(LOCAL_SESSIONS_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalSessions(sessions: ChatSession[]) {
+  localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(sessions.slice(0, 100)));
+}
+
+function addLocalSession(session: ChatSession) {
+  const existing = getLocalSessions();
+  if (existing.some((s) => s.key === session.key)) return;
+  saveLocalSessions([session, ...existing]);
+}
+
+function updateLocalSessionLabel(key: string, label: string) {
+  const existing = getLocalSessions();
+  const idx = existing.findIndex((s) => s.key === key);
+  if (idx >= 0) {
+    existing[idx].label = label;
+    existing[idx].updatedAt = Date.now();
+  }
+  saveLocalSessions(existing);
 }
 
 export function ChatPage() {
@@ -64,6 +94,8 @@ export function ChatPage() {
   // Load sessions list on mount
   useEffect(() => {
     loadSessions();
+    // Ensure initial session exists locally
+    addLocalSession({ key: activeSession, label: "New Chat", updatedAt: Date.now() });
   }, []);
 
   // Load chat history when switching sessions
@@ -93,17 +125,35 @@ export function ChatPage() {
         limit: 100,
       });
       const allSessions = res?.sessions || [];
-      // Filter to dashboard sessions + any with recent activity
-      const chatSessions: ChatSession[] = allSessions
+      const gatewaySessions: ChatSession[] = allSessions
         .filter((s: any) => s.key?.startsWith("dashboard-"))
         .map((s: any) => ({
           key: s.key,
           label: s.label || s.key,
           updatedAt: s.lastActivityAt || s.createdAt,
-        }))
-        .sort((a: ChatSession, b: ChatSession) => (b.updatedAt || 0) - (a.updatedAt || 0));
-      setSessions(chatSessions);
-    } catch {}
+        }));
+
+      // Merge with local sessions (local has sessions gateway might not know about yet)
+      const local = getLocalSessions();
+      const merged = new Map<string, ChatSession>();
+      for (const s of local) merged.set(s.key, s);
+      for (const s of gatewaySessions) {
+        const existing = merged.get(s.key);
+        merged.set(s.key, {
+          ...s,
+          label: s.label && !s.label.startsWith("dashboard-") ? s.label : existing?.label || s.label,
+        });
+      }
+
+      const sorted = [...merged.values()].sort(
+        (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)
+      );
+      setSessions(sorted);
+      saveLocalSessions(sorted);
+    } catch {
+      // Fallback to local only
+      setSessions(getLocalSessions());
+    }
   }
 
   async function loadHistory(sessionKey: string) {
@@ -128,11 +178,13 @@ export function ChatPage() {
 
   function handleNewChat() {
     const newKey = generateSessionKey();
+    addLocalSession({ key: newKey, label: "New Chat", updatedAt: Date.now() });
     setActiveSession(newKey);
     setMessages([]);
     setInput("");
     setSending(false);
     if (pollRef.current) clearTimeout(pollRef.current);
+    loadSessions();
     inputRef.current?.focus();
   }
 
@@ -155,6 +207,11 @@ export function ChatPage() {
     ]);
 
     try {
+      // Save session locally with first message as label
+      const label = text.length > 40 ? text.slice(0, 40) + "…" : text;
+      addLocalSession({ key: activeSession, label, updatedAt: Date.now() });
+      updateLocalSessionLabel(activeSession, label);
+
       const idempotencyKey = crypto.randomUUID();
       await rpcClient.request("chat.send", {
         sessionKey: activeSession,
