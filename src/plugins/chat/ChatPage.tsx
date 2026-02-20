@@ -337,16 +337,21 @@ export function ChatPage() {
         
         // Skip toolResult messages — fold results into previous assistant's toolCalls
         if (m.role === "toolResult" || m.role === "tool") {
-          // Try to attach result to last assistant message's last tool call
           if (msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && msgs[msgs.length - 1].toolCalls?.length) {
             const lastTc = msgs[msgs.length - 1].toolCalls!;
             if (lastTc.length > 0 && !lastTc[lastTc.length - 1].result) {
+              // Only store a short result preview for the expandable section
               lastTc[lastTc.length - 1].result = text.slice(0, 500);
-              // Also extract file paths from tool results
-              const paths = text.match(FILE_PATH_REGEX);
-              if (paths && !msgs[msgs.length - 1].content) {
-                msgs[msgs.length - 1].content = paths.join("\n");
-              }
+            }
+          }
+          // Extract file paths from tool results and add to nearest assistant msg
+          const paths = text.match(FILE_PATH_REGEX);
+          if (paths && msgs.length > 0 && msgs[msgs.length - 1].role === "assistant") {
+            const prev = msgs[msgs.length - 1];
+            const existingPaths = prev.content.match(FILE_PATH_REGEX) || [];
+            const newPaths = paths.filter(p => !existingPaths.includes(p));
+            if (newPaths.length > 0) {
+              prev.content = (prev.content ? prev.content + "\n" : "") + newPaths.join("\n");
             }
           }
           continue;
@@ -453,6 +458,13 @@ export function ChatPage() {
                 if (msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && msgs[msgs.length - 1].toolCalls?.length) {
                   const lastTc = msgs[msgs.length - 1].toolCalls!;
                   if (lastTc.length > 0 && !lastTc[lastTc.length - 1].result) lastTc[lastTc.length - 1].result = t.slice(0, 500);
+                }
+                const paths = t.match(FILE_PATH_REGEX);
+                if (paths && msgs.length > 0 && msgs[msgs.length - 1].role === "assistant") {
+                  const prev = msgs[msgs.length - 1];
+                  const ep = prev.content.match(FILE_PATH_REGEX) || [];
+                  const np = paths.filter(p => !ep.includes(p));
+                  if (np.length > 0) prev.content = (prev.content ? prev.content + "\n" : "") + np.join("\n");
                 }
                 continue;
               }
