@@ -120,7 +120,7 @@ export class OpenClawRPC {
       minProtocol: 3,
       maxProtocol: 3,
       client: {
-        id: "openclaw-dashboard",
+        id: "openclaw-control-ui",
         version: "0.1.0",
         platform: typeof navigator !== "undefined" ? navigator.platform : "web",
         mode: "ui",
